@@ -6,6 +6,12 @@
   "scripts": {
     "scan": "node run.js",
     "scan:30": "node run.js 30",
+    "scan:dry": "node run.js 7 --dry-run",
+    "targets": "node scan-targets.js",
+    "targets:dry": "node scan-targets.js --dry-run",
+    "clean": "node clean-sheets.js",
+    "letters": "node generate-letters.js",
+    "letters:dry": "node generate-letters.js --dry-run --top 2",
     "setup": "node setup-oauth.js"
   },
   "keywords": [],
@@ -15,6 +21,7 @@
     "@anthropic-ai/sdk": "^0.80.0",
     "cheerio": "^1.2.0",
     "dotenv": "^17.3.1",
-    "googleapis": "^171.4.0"
+    "googleapis": "^171.4.0",
+    "sunsama-api": "^0.14.0"
   }
 }

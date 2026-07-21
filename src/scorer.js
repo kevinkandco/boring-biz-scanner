@@ -7,15 +7,25 @@ const SYSTEM_PROMPT = "You are a JSON-only API. You MUST respond with valid JSON
 function buildScoringPrompt() {
   return `Evaluate this business-for-sale listing. The buyer wants a "boring business" that is:
 
-1. ABSENTEE-FRIENDLY (0-10): Can this run without the owner present daily? Laundromats, car washes, self-storage, vending = high. Restaurants, professional services = low.
-2. HANDS-OFF (0-10): How little ongoing management is needed? Coin-op and automated = high. Service businesses with employees = medium. Owner-operator required = low.
+1. ABSENTEE-FRIENDLY (0-10): Can this run without the owner present daily? Laundromats, car washes, self-storage, vending = high. A service business WITH a manager or supervisor in place = medium-high. Restaurants, owner-operator professional services = low.
+2. HANDS-OFF (0-10): How little ongoing owner involvement is needed? Coin-op and automated = high. Service businesses with an existing management layer = medium-high. Owner IS the business (license holder, chief technician, main salesperson) = low.
 3. OPTIMIZATION POTENTIAL (0-10): Is there obvious upside via pricing, marketing, technology, or operational improvements? Outdated operations = high. Already optimized = low.
 4. DURABILITY (0-10): Is demand recession-resistant and not dependent on trends? Essential services = high. Discretionary/trendy = low.
 
 Buyer preferences:
+- OWNER TIME IS THE HARD CONSTRAINT: the buyer can commit at most ${process.env.OWNER_TIME || "2-3 days per week"}. Weight absentee and hands-off scores most heavily in the overall score. A business requiring daily owner presence must score 4 or below overall UNLESS the listing states a manager/management team is in place or the business is currently absentee-run.
 - Minimum SDE: $${process.env.MIN_SDE || "100000"}
 - Preferred region: ${process.env.PREFERRED_REGION || "Seattle, WA"} (within driving distance ideal)
 - Max asking price: $${process.env.MAX_ASKING_PRICE || "750000"}
+
+Also detect BUYING SIGNALS — facts in the listing that make this deal materially easier or better for this buyer:
+- seller financing offered or "flexible terms"
+- manager or key staff in place / currently absentee-run
+- real estate included in the price
+- long establishment (15+ years) or retiring seller
+- recurring/contract revenue
+- licensed staff on payroll (matters for trades)
+Only list signals actually stated or strongly implied; do not invent.
 
 Respond with ONLY this JSON structure:
 {
@@ -31,8 +41,8 @@ Respond with ONLY this JSON structure:
   "optimization_score": 0-10,
   "durability_score": 0-10,
   "overall_score": 0-10,
-  "meets_sde_minimum": true/false/null,
-  "within_driving_distance": true/false/null,
+  "meets_criteria": true/false/null (true only if SDE >= buyer minimum AND asking <= buyer maximum, when both are known; null if financials unknown),
+  "signals": ["buying signals detected, from the list above"],
   "deal_notes": "1-2 sentence summary",
   "red_flags": ["list any concerns"],
   "url": "listing URL if available"
@@ -52,8 +62,9 @@ async function scoreListing(listing, retries) {
   for (var attempt = 1; attempt <= retries; attempt++) {
     try {
       var response = await client.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 800,
+        model: "claude-sonnet-5",
+        max_tokens: 1200,
+        thinking: { type: "disabled" },
         system: SYSTEM_PROMPT,
         messages: [
           {

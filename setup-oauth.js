@@ -9,6 +9,27 @@ require("dotenv").config();
 const { google } = require("googleapis");
 const http = require("http");
 const url = require("url");
+const fs = require("fs");
+const path = require("path");
+
+function saveRefreshToken(refreshToken) {
+  const envPath = path.join(__dirname, ".env");
+  try {
+    let env = fs.readFileSync(envPath, "utf-8");
+    if (/^GOOGLE_REFRESH_TOKEN=.*$/m.test(env)) {
+      env = env.replace(
+        /^GOOGLE_REFRESH_TOKEN=.*$/m,
+        `GOOGLE_REFRESH_TOKEN=${refreshToken}`
+      );
+    } else {
+      env += `\nGOOGLE_REFRESH_TOKEN=${refreshToken}\n`;
+    }
+    fs.writeFileSync(envPath, env);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
@@ -69,8 +90,12 @@ async function main() {
         `);
 
         console.log(`✅ Got tokens!\n`);
-        console.log(`Add this to your .env file:\n`);
-        console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}\n`);
+        if (tokens.refresh_token && saveRefreshToken(tokens.refresh_token)) {
+          console.log(`✅ GOOGLE_REFRESH_TOKEN updated in .env automatically.\n`);
+        } else {
+          console.log(`Add this to your .env file:\n`);
+          console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}\n`);
+        }
 
         server.close();
         process.exit(0);

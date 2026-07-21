@@ -2,6 +2,7 @@ const { google } = require("googleapis");
 
 const HEADERS = [
   "Score",
+  "Go/No-Go",
   "Title",
   "Type",
   "Asking Price",
@@ -13,15 +14,73 @@ const HEADERS = [
   "Hands-Off",
   "Optimization",
   "Durability",
-  "Meets SDE Min",
-  "Driving Distance",
-  "Deal Notes",
+  "SDE Multiple",
+  "Valuation",
+  "SBA Down Payment",
+  "Monthly Payment",
+  "DSCR",
+  "SBA Feasible",
+  "Optimizations",
+  "Absentee Realistic",
+  "Manager Cost",
+  "Deal Summary",
   "Red Flags",
   "Source",
   "URL",
   "Email Date",
   "Scored At",
+  "Signals",
+  "Advisor Take",
 ];
+
+const TITLE_COL = HEADERS.indexOf("Title");
+const URL_COL = HEADERS.indexOf("URL");
+const LAST_COL = "AD"; // 30 columns: A..AD
+
+function money(n) {
+  return n != null ? `$${n.toLocaleString()}` : "";
+}
+
+function yesNo(v) {
+  return v === true ? "Yes" : v === false ? "No" : "Unknown";
+}
+
+function formatOptimizations(opts) {
+  if (!Array.isArray(opts)) return "";
+  return opts
+    .map((o) => {
+      const extras = [o.impact, o.timeframe].filter(Boolean).join(", ");
+      return extras ? `${o.opportunity} (${extras})` : o.opportunity;
+    })
+    .join("; ");
+}
+
+// URLs and titles of everything ever scored (active + archived) so scans can
+// skip re-scoring known listings — the single biggest API cost saver.
+async function getKnownListings(auth) {
+  const sheets = google.sheets({ version: "v4", auth });
+  const spreadsheetId = process.env.SPREADSHEET_ID;
+  const urls = new Set();
+  const titles = new Set();
+
+  for (const tab of ["Deal Flow", "Archive"]) {
+    try {
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${tab}'!A:${LAST_COL}`,
+      });
+      const rows = res.data.values || [];
+      for (const row of rows.slice(1)) {
+        if (row[URL_COL]) urls.add(row[URL_COL]);
+        if (row[TITLE_COL]) titles.add(row[TITLE_COL].toLowerCase());
+      }
+    } catch {
+      // tab may not exist yet
+    }
+  }
+
+  return { urls, titles };
+}
 
 async function writeToSheet(auth, scoredListings) {
   const sheets = google.sheets({ version: "v4", auth });
@@ -47,34 +106,17 @@ async function writeToSheet(auth, scoredListings) {
     throw err;
   }
 
-  // read existing URLs to avoid duplicates
-  let existingUrls = new Set();
-  let existingTitles = new Set();
-  try {
-    const existing = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `'${sheetName}'!A:T`,
-    });
-    if (existing.data.values && existing.data.values.length > 1) {
-      for (const row of existing.data.values.slice(1)) {
-        if (row[17]) existingUrls.add(row[17]); // URL column
-        if (row[1]) existingTitles.add(row[1].toLowerCase()); // Title column
-      }
-    }
-  } catch {
-    // sheet might be empty
-  }
-
-  // filter out duplicates
+  // filter out duplicates — checks active AND archived listings
+  const known = await getKnownListings(auth);
   const newListings = scoredListings.filter((l) => {
-    if (l.url && existingUrls.has(l.url)) return false;
-    if (l.title && existingTitles.has(l.title.toLowerCase())) return false;
+    if (l.url && known.urls.has(l.url)) return false;
+    if (l.title && known.titles.has(l.title.toLowerCase())) return false;
     return true;
   });
 
   if (newListings.length === 0) {
     console.log("  No new listings to add (all duplicates).");
-    return { added: 0, duplicates: scoredListings.length };
+    return { added: 0, duplicates: scoredListings.length, newListings: [] };
   }
 
   // check if headers exist
@@ -82,7 +124,7 @@ async function writeToSheet(auth, scoredListings) {
   try {
     const headerCheck = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${sheetName}'!A1:T1`,
+      range: `'${sheetName}'!A1:${LAST_COL}1`,
     });
     hasHeaders =
       headerCheck.data.values && headerCheck.data.values.length > 0;
@@ -99,33 +141,37 @@ async function writeToSheet(auth, scoredListings) {
   for (const l of newListings) {
     rows.push([
       l.overall_score || 0,
+      l.go_no_go || "",
       l.title || "",
       l.business_type || "",
-      l.asking_price ? `$${l.asking_price.toLocaleString()}` : "",
-      l.sde ? `$${l.sde.toLocaleString()}` : "",
-      l.cash_flow ? `$${l.cash_flow.toLocaleString()}` : "",
-      l.revenue ? `$${l.revenue.toLocaleString()}` : "",
+      money(l.asking_price),
+      money(l.sde),
+      money(l.cash_flow),
+      money(l.revenue),
       l.location || "",
       l.absentee_score || "",
       l.handsoff_score || "",
       l.optimization_score || "",
       l.durability_score || "",
-      l.meets_sde_minimum === true
-        ? "Yes"
-        : l.meets_sde_minimum === false
-          ? "No"
-          : "Unknown",
-      l.within_driving_distance === true
-        ? "Yes"
-        : l.within_driving_distance === false
-          ? "No"
-          : "Unknown",
-      l.deal_notes || "",
+      l.sde_multiple != null ? `${l.sde_multiple}x` : "",
+      [l.valuation, l.suggested_offer_range ? `offer ${l.suggested_offer_range}` : null]
+        .filter(Boolean)
+        .join("; "),
+      money(l.sba_down_payment),
+      money(l.sba_monthly_payment),
+      l.dscr != null ? l.dscr : "",
+      l.sba_feasible != null ? yesNo(l.sba_feasible) : "",
+      formatOptimizations(l.optimizations),
+      l.absentee_realistic != null ? yesNo(l.absentee_realistic) : "",
+      money(l.estimated_manager_cost),
+      l.deal_summary || "",
       Array.isArray(l.red_flags) ? l.red_flags.join("; ") : "",
       l.source || "",
       l.url || "",
       l.emailDate || "",
       l.scoredAt || "",
+      Array.isArray(l.signals) ? l.signals.join("; ") : "",
+      l.advisor_take || "",
     ]);
   }
 
@@ -161,7 +207,6 @@ async function writeToSheet(auth, scoredListings) {
               },
               cell: {
                 userEnteredFormat: {
-                  textFormat: { bold: true },
                   backgroundColor: { red: 0.15, green: 0.15, blue: 0.15 },
                   textFormat: {
                     bold: true,
@@ -190,7 +235,7 @@ async function writeToSheet(auth, scoredListings) {
                 sheetId,
                 dimension: "COLUMNS",
                 startIndex: 0,
-                endIndex: 20,
+                endIndex: HEADERS.length,
               },
             },
           },
@@ -205,7 +250,8 @@ async function writeToSheet(auth, scoredListings) {
   return {
     added: newListings.length,
     duplicates: scoredListings.length - newListings.length,
+    newListings,
   };
 }
 
-module.exports = { writeToSheet };
+module.exports = { writeToSheet, getKnownListings };

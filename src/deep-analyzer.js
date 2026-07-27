@@ -26,7 +26,19 @@ function computeDscr(annualCashFlow, annualDebtService) {
   return Math.round((annualCashFlow / annualDebtService) * 100) / 100;
 }
 
-function buildAnalysisPrompt(listing, sba, dscr) {
+// max purchase price at which the deal still clears 1.25x DSCR with
+// 10% down at SBA terms — the number to never negotiate above
+function computeWalkAwayPrice(annualCashFlow, minDscr = 1.25) {
+  if (!annualCashFlow || annualCashFlow <= 0) return null;
+  const maxMonthlyPayment = annualCashFlow / minDscr / 12;
+  const r = SBA_RATE / 12;
+  const n = SBA_TERM_YEARS * 12;
+  const annuityFactor = (1 - Math.pow(1 + r, -n)) / r;
+  const maxLoan = maxMonthlyPayment * annuityFactor;
+  return Math.round(maxLoan / (1 - SBA_DOWN_PCT));
+}
+
+function buildAnalysisPrompt(listing, sba, dscr, walkAwayPrice) {
   const earnings = listing.sde || listing.cash_flow;
   const sdeMultiple =
     listing.asking_price && earnings
@@ -40,7 +52,8 @@ function buildAnalysisPrompt(listing, sba, dscr) {
 - Monthly payment: $${sba.monthlyPayment.toLocaleString()}
 - Annual debt service: $${sba.annualDebtService.toLocaleString()}
 - DSCR (annual cash flow / annual debt service): ${dscr != null ? dscr : "unknown — cash flow not available"}
-${sdeMultiple != null ? `- Implied SDE multiple: ${sdeMultiple}x` : ""}`
+${sdeMultiple != null ? `- Implied SDE multiple: ${sdeMultiple}x` : ""}
+${walkAwayPrice != null ? `- Walk-away price (max price still clearing 1.25x DSCR at these terms): $${walkAwayPrice.toLocaleString()}` : ""}`
     : "SBA terms could not be computed (no asking price available).";
 
   return `You are analyzing a business-for-sale listing for a buyer seeking a "boring business" they can run semi-absentee. This is a second-pass deep analysis; the listing already scored well on an initial screen.
@@ -63,6 +76,8 @@ Analyze:
 4. OPTIMIZATION OPPORTUNITIES: 3-5 specific, actionable opportunities to increase revenue or cut costs, each with estimated impact and timeframe.
 5. ABSENTEE ASSESSMENT: Can THIS business genuinely run on ${process.env.OWNER_TIME || "2-3 days per week"} of owner time? Base this on what the listing actually says about staff, managers, and current owner involvement — not on category stereotypes. If a manager must be hired, estimate the annual cost and subtract it (along with debt service) when judging whether the deal still reaches the buyer's income goal.
 6. VERDICT: strong buy / worth exploring / proceed with caution / pass.
+7. NEXT ACTION: the single most useful concrete step to take on THIS listing right now — e.g. "Contact broker via listing page to request CIM and 3 years of P&Ls", "Ask broker: is seller financing available at this price?", "Drive by the location — verify machine count and condition before engaging". For a pass verdict, the next action is simply "Pass — [one-line reason]".
+8. BROKER QUESTIONS: 3-5 sharp diligence questions specific to this listing's business type and its red flags — questions whose answers would change the go/no-go, not generic checklist items.
 
 Respond with ONLY this JSON structure:
 {
@@ -80,6 +95,9 @@ Respond with ONLY this JSON structure:
   "absentee_notes": "1-2 sentences",
   "estimated_manager_cost": number or null,
   "go_no_go": "strong buy" | "worth exploring" | "proceed with caution" | "pass",
+  "next_action": "one specific concrete step",
+  "questions_for_broker": ["3-5 sharp listing-specific diligence questions"],
+  "walk_away_price": number or null (use the pre-computed walk-away price above),
   "deal_summary": "2-3 sentence overall assessment",
   "advisor_take": "2-3 sentences in the voice of the buyer's strategic advisor: WHY this deal does or doesn't get them to their income goal given their cash AND their ${process.env.OWNER_TIME || "2-3 days per week"} availability (net income after debt service and any manager cost), the single biggest risk, and the concrete next action (e.g. 'request P&L', 'ask if the manager stays', 'pass')"
 }`;
@@ -133,6 +151,7 @@ async function deepAnalyzeListing(listing, retries = 3) {
 
   const sba = computeSbaTerms(askingPrice);
   const dscr = sba ? computeDscr(annualCashFlow, sba.annualDebtService) : null;
+  const walkAwayPrice = computeWalkAwayPrice(annualCashFlow);
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -145,7 +164,7 @@ async function deepAnalyzeListing(listing, retries = 3) {
           {
             role: "user",
             content:
-              buildAnalysisPrompt(listing, sba, dscr) +
+              buildAnalysisPrompt(listing, sba, dscr, walkAwayPrice) +
               "\n\nListing:\n" +
               formatListingForAnalysis(listing),
           },
@@ -165,6 +184,7 @@ async function deepAnalyzeListing(listing, retries = 3) {
         sba_down_payment: sba ? sba.downPayment : null,
         sba_monthly_payment: sba ? sba.monthlyPayment : null,
         dscr: dscr,
+        walk_away_price: walkAwayPrice,
       });
     } catch (err) {
       const isRateLimit = err.status === 429 || (err.message || "").includes("429");
@@ -192,6 +212,7 @@ async function deepAnalyzeListing(listing, retries = 3) {
           sba_down_payment: sba ? sba.downPayment : null,
           sba_monthly_payment: sba ? sba.monthlyPayment : null,
           dscr: dscr,
+          walk_away_price: walkAwayPrice,
           go_no_go: null,
           deal_summary: `Deep analysis failed after ${retries} attempts`,
         };
@@ -214,4 +235,10 @@ async function deepAnalyzeListings(listings) {
   return results;
 }
 
-module.exports = { deepAnalyzeListings, deepAnalyzeListing, computeSbaTerms, computeDscr };
+module.exports = {
+  deepAnalyzeListings,
+  deepAnalyzeListing,
+  computeSbaTerms,
+  computeDscr,
+  computeWalkAwayPrice,
+};

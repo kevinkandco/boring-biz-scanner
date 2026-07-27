@@ -177,13 +177,20 @@ function buildOnMarketSection(listings) {
     if (l.go_no_go) headline.push(l.go_no_go);
     parts.push(headline.join(" · "));
 
+    if (l.next_action) parts.push(`➡️ **Next:** ${l.next_action}`);
+
     const facts = [
       `Asking ${fmtMoney(l.asking_price)}`,
       `SDE ${fmtMoney(l.sde || l.cash_flow)}`,
     ];
     if (l.dscr != null) facts.push(`DSCR ${l.dscr}`);
     if (l.sde_multiple != null) facts.push(`${l.sde_multiple}x SDE`);
+    if (l.walk_away_price != null) facts.push(`Walk-away ${fmtMoney(l.walk_away_price)}`);
     parts.push(facts.join(" · "));
+
+    if (Array.isArray(l.questions_for_broker) && l.questions_for_broker.length > 0) {
+      parts.push(`**Ask the broker:** ${l.questions_for_broker.join(" · ")}`);
+    }
 
     if (Array.isArray(l.signals) && l.signals.length > 0) {
       parts.push(`Signals: ${l.signals.join("; ")}`);

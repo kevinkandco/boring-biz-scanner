@@ -12,7 +12,7 @@ const DEAL_HEADERS = [
   "SDE Multiple", "Valuation", "SBA Down Payment", "Monthly Payment", "DSCR",
   "SBA Feasible", "Optimizations", "Absentee Realistic", "Manager Cost",
   "Deal Summary", "Red Flags", "Source", "URL", "Email Date", "Scored At",
-  "Signals", "Advisor Take",
+  "Signals", "Advisor Take", "Next Action", "Broker Questions", "Walk-Away Price",
 ];
 
 const TARGET_HEADERS = [
@@ -138,7 +138,7 @@ async function cleanDealFlow(auth) {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: "'Deal Flow'!A:AD",
+    range: "'Deal Flow'!A:AG",
   }).catch(() => null);
   const rows = res?.data?.values || [];
   if (rows.length < 2) return { migrated: 0, archived: 0, kept: 0 };

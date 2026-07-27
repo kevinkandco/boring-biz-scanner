@@ -8,12 +8,14 @@ const { deepAnalyzeListings } = require("./src/deep-analyzer");
 const { writeToSheet, getKnownListings } = require("./src/sheets");
 const { cleanDealFlow } = require("./src/sheet-maintenance");
 const { upsertDailyDigest, buildOnMarketSection } = require("./src/sunsama");
+const { recordRun, sendFailureEmail } = require("./src/health");
 
-async function run() {
-  const startTime = Date.now();
+async function run(stats) {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run") || !!process.env.DRY_RUN;
+  const noSunsama = args.includes("--no-sunsama");
   const daysBack = parseInt(args.find((a) => /^\d+$/.test(a)) || "7", 10);
+  if (dryRun) stats.status = "DRY RUN";
 
   console.log(`\n🔍 Boring Business Scanner${dryRun ? " (DRY RUN)" : ""}`);
   console.log(`  Scanning last ${daysBack} days of email alerts...\n`);
@@ -28,6 +30,7 @@ async function run() {
   // 2. fetch emails
   console.log("\n2. Fetching listing alert emails...");
   const emails = await fetchListingEmails(auth, daysBack);
+  stats.emailsFound = emails.length;
   if (emails.length === 0) {
     console.log("\n  No listing emails found. Make sure you've set up saved");
     console.log("  search alerts on BizBuySell, BizQuest, etc.");
@@ -56,6 +59,7 @@ async function run() {
   }
 
   console.log(`\n  Total listings found: ${allListings.length}`);
+  stats.listingsParsed = allListings.length;
 
   // skip listings we've already scored (active or archived) — no point paying twice
   const known = await getKnownListings(auth);
@@ -76,6 +80,7 @@ async function run() {
   console.log("\n4. Scoring listings with Claude...");
   const scored = await scoreListings(freshListings);
   console.log(`  Scored ${scored.length} listings`);
+  stats.scored = scored.length;
 
   const passing = scored.filter((s) => s.overall_score >= 6);
   console.log(`  ${passing.length} scored 6+ (worth a look)`);
@@ -124,6 +129,7 @@ async function run() {
   } else {
     console.log("\n6. Writing to Google Sheets...");
     result = await writeToSheet(auth, scored);
+    stats.rowsAdded = result.added;
     const cleaned = await cleanDealFlow(auth);
     console.log(
       `  Sheet cleaned: ${cleaned.kept} active, ${cleaned.archived} archived` +
@@ -143,17 +149,20 @@ async function run() {
     } else {
       console.log("  (none — no new listings scored 6+ and met criteria)");
     }
+  } else if (noSunsama) {
+    console.log("\n7. Skipping Sunsama digest (--no-sunsama)");
   } else {
     console.log("\n7. Updating Sunsama digest...");
     if (newPassing.length > 0) {
-      await upsertDailyDigest(buildOnMarketSection(newPassing), { timeEstimate: 15 });
+      const digest = await upsertDailyDigest(buildOnMarketSection(newPassing), { timeEstimate: 15 });
+      stats.sunsamaCreated = !!(digest.created || digest.appended);
     } else {
       console.log("  No new listings scored 6+ and met criteria, skipping digest.");
     }
   }
 
   // summary
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
   console.log(`\n✅ Done in ${elapsed}s${dryRun ? " (dry run — nothing written)" : ""}`);
   if (!dryRun) {
     console.log(`  ${result.added} new listings added to sheet`);
@@ -176,8 +185,38 @@ async function run() {
   );
 }
 
-run().catch((err) => {
-  console.error("\n❌ Error:", err.message);
-  if (process.env.DEBUG) console.error(err);
-  process.exit(1);
-});
+async function main() {
+  const stats = {
+    startTime: Date.now(),
+    status: "OK",
+    emailsFound: 0,
+    listingsParsed: 0,
+    scored: 0,
+    rowsAdded: 0,
+    sunsamaCreated: false,
+    errors: [],
+  };
+
+  try {
+    await run(stats);
+  } catch (err) {
+    stats.status = "FAILED";
+    stats.errors.push((err.message || String(err)).substring(0, 300));
+    console.error("\n❌ Error:", err.message);
+    if (process.env.DEBUG) console.error(err);
+    // alert: email if the token ever gains gmail.send; Health tab regardless
+    try {
+      await sendFailureEmail(getAuthClient(), err.stack || err.message);
+    } catch {}
+    process.exitCode = 1;
+  } finally {
+    stats.durationSeconds = Math.round((Date.now() - stats.startTime) / 10) / 100;
+    try {
+      await recordRun(getAuthClient(), stats);
+    } catch (healthErr) {
+      console.error("  Health recording failed:", healthErr.message);
+    }
+  }
+}
+
+main();

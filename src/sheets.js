@@ -31,11 +31,14 @@ const HEADERS = [
   "Scored At",
   "Signals",
   "Advisor Take",
+  "Next Action",
+  "Broker Questions",
+  "Walk-Away Price",
 ];
 
 const TITLE_COL = HEADERS.indexOf("Title");
 const URL_COL = HEADERS.indexOf("URL");
-const LAST_COL = "AD"; // 30 columns: A..AD
+const LAST_COL = "AG"; // 33 columns: A..AG
 
 function money(n) {
   return n != null ? `$${n.toLocaleString()}` : "";
@@ -172,6 +175,9 @@ async function writeToSheet(auth, scoredListings) {
       l.scoredAt || "",
       Array.isArray(l.signals) ? l.signals.join("; ") : "",
       l.advisor_take || "",
+      l.next_action || "",
+      Array.isArray(l.questions_for_broker) ? l.questions_for_broker.join(" | ") : "",
+      money(l.walk_away_price),
     ]);
   }
 

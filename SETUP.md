@@ -165,3 +165,13 @@ edit the category keywords in `src/parser.js` — the `extractCategory` function
 **parsing errors**: the email formats change occasionally. run with `DEBUG=1 node run.js` to see raw email content. the parser will fall back to ai extraction for unrecognized formats.
 
 **sheets permission error**: make sure the google account you authorized has edit access to the spreadsheet.
+
+## Failure alerting (optional)
+
+Every run writes a heartbeat row to the "Health" tab and `data/last-run.json`.
+On failure the scanner also attempts to email kirkpatrick.kevin.j@gmail.com
+("⚠️ Deal scanner failed"). The current OAuth token only has `gmail.readonly`,
+so the email attempt fails silently and the fallback is a prominent
+`FAILED` row in the Health tab. To enable real email alerts, add
+`https://www.googleapis.com/auth/gmail.send` to SCOPES in setup-oauth.js and
+re-run `npm run setup`.

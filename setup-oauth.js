@@ -13,22 +13,32 @@ const fs = require("fs");
 const path = require("path");
 
 function saveRefreshToken(refreshToken) {
-  const envPath = path.join(__dirname, ".env");
-  try {
-    let env = fs.readFileSync(envPath, "utf-8");
-    if (/^GOOGLE_REFRESH_TOKEN=.*$/m.test(env)) {
-      env = env.replace(
-        /^GOOGLE_REFRESH_TOKEN=.*$/m,
-        `GOOGLE_REFRESH_TOKEN=${refreshToken}`
-      );
-    } else {
-      env += `\nGOOGLE_REFRESH_TOKEN=${refreshToken}\n`;
+  // this project's .env, plus any sibling projects sharing the same OAuth client
+  const envPaths = [
+    path.join(__dirname, ".env"),
+    "/Users/kk/Documents/Coding/wa-offmarket/.env",
+  ];
+  let savedPrimary = false;
+  for (const envPath of envPaths) {
+    try {
+      if (!fs.existsSync(envPath)) continue;
+      let env = fs.readFileSync(envPath, "utf-8");
+      if (/^GOOGLE_REFRESH_TOKEN=.*$/m.test(env)) {
+        env = env.replace(
+          /^GOOGLE_REFRESH_TOKEN=.*$/m,
+          `GOOGLE_REFRESH_TOKEN=${refreshToken}`
+        );
+      } else {
+        env += `\nGOOGLE_REFRESH_TOKEN=${refreshToken}\n`;
+      }
+      fs.writeFileSync(envPath, env);
+      console.log(`  Token written to ${envPath}`);
+      if (envPath.startsWith(__dirname)) savedPrimary = true;
+    } catch {
+      // keep going — primary success is what matters
     }
-    fs.writeFileSync(envPath, env);
-    return true;
-  } catch {
-    return false;
   }
+  return savedPrimary;
 }
 
 const SCOPES = [
